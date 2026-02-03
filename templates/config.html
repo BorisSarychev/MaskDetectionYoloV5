@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="mb-4">Настройки приложения</h1>
+
+<!-- RTSP URL -->
+<div class="mb-3">
+  <label for="rtspUrl" class="form-label">RTSP URL (камера)</label>
+  <input 
+    type="text"
+    id="rtspUrl"
+    class="form-control"
+    style="max-width: 400px;"
+  >
+</div>
+
+<!-- IP/порт стенда -->
+<div class="mb-3">
+  <label for="standIp" class="form-label">IP адрес стенда</label>
+  <input 
+    type="text"
+    id="standIp"
+    class="form-control"
+    style="max-width: 200px;"
+  >
+</div>
+<div class="mb-3">
+  <label for="standPort" class="form-label">Порт стенда</label>
+  <input 
+    type="number"
+    id="standPort"
+    class="form-control"
+    style="max-width: 150px;"
+  >
+</div>
+
+<!-- Параметры детекции -->
+<div class="mb-3">
+  <label for="img_size" class="form-label">img_size (размер входа)</label>
+  <input
+    type="text"
+    id="img_size"
+    class="form-control"
+    style="max-width: 150px;"
+    placeholder="Напр. 640 или 640,480"
+  >
+</div>
+
+<div class="mb-3">
+  <label for="conf_thres" class="form-label">conf_thres (доверие)</label>
+  <input 
+    type="number"
+    step="0.01"
+    id="conf_thres"
+    class="form-control"
+    style="max-width: 150px;"
+  >
+</div>
+
+<div class="mb-3">
+  <label for="iou_thres" class="form-label">iou_thres (NMS IoU)</label>
+  <input 
+    type="number"
+    step="0.01"
+    id="iou_thres"
+    class="form-control"
+    style="max-width: 150px;"
+  >
+</div>
+
+<div class="mb-3">
+  <label for="max_det" class="form-label">max_det (макс.объектов)</label>
+  <input 
+    type="number"
+    id="max_det"
+    class="form-control"
+    style="max-width: 150px;"
+  >
+</div>
+
+<!-- view (показ окон) -->
+<div class="form-check mb-3">
+  <input class="form-check-input" type="checkbox" id="view" />
+  <label class="form-check-label" for="view">Отобразить детекцию</label>
+</div>
+
+<!-- Кнопка "Сохранить" -->
+<button id="saveConfigBtn" class="btn btn-primary">Сохранить конфигурацию</button>
+
+<script>
+// При загрузке страницы - подгружаем текущий конфиг
+window.addEventListener("load", () => {
+  loadConfig();
+});
+
+async function loadConfig() {
+  try {
+    const resp = await fetch("/api/load_config");
+    const cfg = await resp.json();
+
+    // Заполняем поля
+    document.getElementById("rtspUrl").value   = cfg.rtspUrl   || "";
+    document.getElementById("standIp").value   = cfg.standIp   || "";
+    document.getElementById("standPort").value = cfg.standPort || 7777;
+
+    // img_size может быть single number (640) или массив [640,480].
+    if (Array.isArray(cfg.img_size)) {
+      document.getElementById("img_size").value = cfg.img_size.join(",");
+    } else {
+      document.getElementById("img_size").value = cfg.img_size || "640";
+    }
+
+    document.getElementById("conf_thres").value = cfg.conf_thres || 0.45;
+    document.getElementById("iou_thres").value  = cfg.iou_thres  || 0.45;
+    document.getElementById("max_det").value    = cfg.max_det    || 1000;
+    document.getElementById("view").checked     = !!cfg.view;
+  } catch (err) {
+    console.error("Ошибка при загрузке config:", err);
+    alert("Не удалось загрузить конфигурацию");
+  }
+}
+
+document.getElementById("saveConfigBtn").addEventListener("click", () => {
+  saveConfig();
+});
+
+async function saveConfig() {
+  // Преобразуем поле img_size в int или массив int
+  let rawImgSize = document.getElementById("img_size").value.trim();
+  let parsedImgSize;
+
+  if (rawImgSize.includes(",")) {
+    // Преобразуем "640,480" в [640,480]
+    parsedImgSize = rawImgSize.split(",").map(v => parseInt(v.trim(), 10) || 640);
+  } else {
+    let singleVal = parseInt(rawImgSize, 10);
+    if (!singleVal) singleVal = 640;
+    // Сохраняем как число
+    parsedImgSize = singleVal;
+  }
+
+  const newConfig = {
+    rtspUrl:   document.getElementById("rtspUrl").value,
+    standIp:   document.getElementById("standIp").value,
+    standPort: parseInt(document.getElementById("standPort").value, 10) || 7777,
+
+    // weights: не трогаем, не отображаем
+
+    img_size: parsedImgSize,
+    conf_thres:  parseFloat(document.getElementById("conf_thres").value) || 0.45,
+    iou_thres:   parseFloat(document.getElementById("iou_thres").value)  || 0.45,
+    max_det:     parseInt(document.getElementById("max_det").value, 10)  || 1000,
+    view:        document.getElementById("view").checked
+  };
+
+  try {
+    const resp = await fetch("/api/save_config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newConfig),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      alert("Конфигурация сохранена!");
+    } else {
+      alert("Ошибка сохранения: " + (data.error || data.message));
+    }
+  } catch (err) {
+    console.error("Ошибка при сохранении:", err);
+    alert("Ошибка при сохранении конфигурации");
+  }
+}
+</script>
+
+{% endblock %}

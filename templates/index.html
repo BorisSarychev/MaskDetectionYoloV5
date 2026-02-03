@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Настройка точек интереса и гомографии</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('interest')">Точки интереса</div>
+        <div class="tab" onclick="switchTab('homography')">Гомография</div>
+    </div>
+
+    <div id="interest" class="content active">
+        <div class="container">
+            <h1>Настройка точек интереса</h1>
+            {% if error %}
+            <p class="error">Ошибка: {{ error }}</p>
+            {% endif %}
+            <label for="sourceInput">Источник (RTSP/Видео):</label>
+            <input type="text" id="sourceInput" value="{{ source }}" placeholder="Введите URL источника">
+            <button onclick="updateSource()">Обновить источник</button>
+            <br><br>
+            <button onclick="refreshFrame()">Обновить кадр</button>
+            <br><br>
+            <canvas id="imageCanvas"></canvas>
+            <br>
+            <button onclick="savePoints()">Сохранить точки</button>
+        </div>
+    </div>
+
+    <div id="homography" class="content">
+        <div class="container">
+            <h1>Настройка гомографии</h1>
+            <p>Выберите 4 точки на изображении и укажите их реальные координаты.</p>
+            <button onclick="refreshFrame()">Обновить кадр</button>
+            <br><br>
+            <canvas id="homographyCanvas"></canvas>
+            <div id="coordinatesList"></div>
+            <br>
+            <button onclick="saveHomography()">Сохранить гомографию</button>
+        </div>
+    </div>
+
+    <script>
+        const tabs = document.querySelectorAll('.tab');
+        const contents = document.querySelectorAll('.content');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const homographyCanvas = document.getElementById('homographyCanvas');
+        const ctxImage = imageCanvas.getContext('2d');
+        const ctxHomography = homographyCanvas.getContext('2d');
+        let interestPoints = [];
+        let homographyPoints = [];
+
+        // Переключение вкладок
+        function switchTab(tabId) {
+            tabs.forEach(tab => tab.classList.remove('active'));
+            contents.forEach(content => content.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+        }
+
+        // Загрузка изображения
+        function loadImage(base64Image, canvas, ctx) {
+            const image = new Image();
+            image.src = `data:image/jpeg;base64,${base64Image}`;
+            image.onload = () => {
+                canvas.width = image.width;
+                canvas.height = image.height;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(image, 0, 0);
+            };
+        }
+
+        // Инициализация изображения
+        {% if image_base64 %}
+        loadImage("{{ image_base64 }}", imageCanvas, ctxImage);
+        loadImage("{{ image_base64 }}", homographyCanvas, ctxHomography);
+        {% endif %}
+
+        // Добавление точек интереса
+        imageCanvas.addEventListener('click', (e) => {
+            const rect = imageCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            interestPoints.push([Math.round(x), Math.round(y)]);
+            drawPoint(x, y, ctxImage, "red");
+        });
+
+        // Добавление точек для гомографии
+        homographyCanvas.addEventListener('click', (e) => {
+            const rect = homographyCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const realX = prompt("Введите реальную координату X (см):");
+            const realY = prompt("Введите реальную координату Y (см):");
+            if (realX && realY) {
+                homographyPoints.push({ pixel: [Math.round(x), Math.round(y)], real: [parseFloat(realX), parseFloat(realY)] });
+                drawPoint(x, y, ctxHomography, "blue");
+                updateCoordinatesList();
+            }
+        });
+
+        // Рисование точки
+        function drawPoint(x, y, ctx, color) {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        // Обновление списка координат
+        function updateCoordinatesList() {
+            const list = document.getElementById('coordinatesList');
+            list.innerHTML = `<h3>Точки гомографии:</h3>`;
+            homographyPoints.forEach((point, index) => {
+                list.innerHTML += `<p>Точка ${index + 1}: Пиксель (${point.pixel[0]}, ${point.pixel[1]}), Реальная (${point.real[0]}, ${point.real[1]})</p>`;
+            });
+        }
+
+        // Сохранение точек интереса
+        function savePoints() {
+            fetch('/save_points', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ points: interestPoints })
+            })
+            .then(response => response.json())
+            .then(data => alert(data.message || "Ошибка сохранения"))
+            .catch(error => console.error('Error:', error));
+        }
+
+        // Сохранение гомографии
+        function saveHomography() {
+            fetch('/save_homography', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ points: homographyPoints })
+            })
+            .then(response => response.json())
+            .then(data => alert(data.message || "Ошибка сохранения"))
+            .catch(error => console.error('Error:', error));
+        }
+
+        // Обновление источника
+        function updateSource() {
+            const source = document.getElementById('sourceInput').value.trim();
+            if (!source) {
+                alert("Введите корректный источник");
+                return;
+            }
+            fetch('/update_source', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ source })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    alert(data.message);
+                    refreshFrame();
+                } else {
+                    alert(data.error || "Ошибка обновления источника");
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        // Обновление кадра
+        function refreshFrame() {
+            fetch('/refresh_frame')
+            .then(response => response.json())
+            .then(data => {
+                if (data.image_base64) {
+                    loadImage(data.image_base64, imageCanvas, ctxImage);
+                    loadImage(data.image_base64, homographyCanvas, ctxHomography);
+                    interestPoints = [];
+                    homographyPoints = [];
+                    updateCoordinatesList();
+                } else {
+                    alert(data.error || "Ошибка обновления кадра");
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    </script>
+</body>
+</html>

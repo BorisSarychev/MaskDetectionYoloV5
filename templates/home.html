@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>Управление процессами</h1>
+
+<!-- 
+  Блок статуса: будем обновлять через /api/status 
+  (например, раз в 2 секунды)
+-->
+<div>
+  <h4>Статус:</h4>
+  <p>Распознавание людей: <span id="detectionStatus">-</span></p>
+  <p>Расчёт координат и отправка на стенд: <span id="pointsStatus">-</span></p>
+</div>
+
+<!-- Кнопки управления -->
+<div class="mt-3">
+  <button id="startDetectionBtn" class="btn btn-success">Запустить детекцию</button>
+  <button id="stopDetectionBtn" class="btn btn-danger">Остановить детекцию</button>
+</div>
+
+<div class="mt-3">
+  <button id="startPointsBtn" class="btn btn-success">Начать расчёт и отправку</button>
+  <button id="stopPointsBtn" class="btn btn-danger">Остановить расчёт</button>
+</div>
+
+<script>
+async function updateStatus() {
+  try {
+    const resp = await fetch("/api/status");
+    const data = await resp.json();
+    // data: { detection_running: bool, points_running: bool }
+
+    document.getElementById("detectionStatus").innerText = data.detection_running ? "Running" : "Stopped";
+    document.getElementById("pointsStatus").innerText    = data.points_running    ? "Running" : "Stopped";
+  } catch (err) {
+    console.error("Status update error:", err);
+  }
+}
+
+// Запрашиваем статус раз в 2 секунды
+setInterval(updateStatus, 2000);
+updateStatus(); // сразу при загрузке
+
+// Кнопки
+document.getElementById("startDetectionBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/start_detection", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert("Error starting detection: " + data.message);
+    } else {
+      alert("Detection started!");
+    }
+    updateStatus();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+document.getElementById("stopDetectionBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/stop_detection", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert("Error stopping detection: " + data.message);
+    } else {
+      alert("Detection stopped!");
+    }
+    updateStatus();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+document.getElementById("startPointsBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/start_process_points", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert("Error starting points: " + data.message);
+    } else {
+      alert("process_points started!");
+    }
+    updateStatus();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+document.getElementById("stopPointsBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/stop_process_points", { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert("Error stopping points: " + data.message);
+    } else {
+      alert("process_points stopped!");
+    }
+    updateStatus();
+  } catch (err) {
+    console.error(err);
+  }
+});
+</script>
+
+{% endblock %}

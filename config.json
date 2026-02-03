@@ -1,0 +1,10 @@
+{
+  "rtspUrl": "rtsp://127.0.0.1:8554/mystream",
+  "standIp": "127.0.0.1",
+  "standPort": 7777,
+  "img_size": 640,
+  "conf_thres": 0.45,
+  "iou_thres": 0.45,
+  "max_det": 1000,
+  "view": true
+}

@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+  .marker {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background-color: red;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .marker-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    background-color: #fff;
+    padding: 1px 4px;
+    border: 1px solid #ccc;
+    font-size: 12px;
+    transform: translate(-50%, 0);
+    white-space: nowrap;
+  }
+
+  /* Убираем стрелочки (spinner) в input[type=number] */
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type=number] {
+    -moz-appearance: textfield; /* Firefox */
+    appearance: textfield;      /* Стандарт */
+  }
+</style>
+
+<h1>Гомография</h1>
+
+<button id="refreshSnapshotBtn" class="btn btn-primary mb-3">Обновить снимок</button>
+
+<div id="snapshotContainer" style="position: relative; display: inline-block;">
+  <img 
+    id="snapshotImg"
+    src="/static/images/snapshot.jpg"
+    style="width:600px; border:1px solid #ccc; cursor: crosshair;"
+    alt="snapshot"
+  >
+</div>
+
+<hr/>
+
+<h3>Точки (пиксельные + реальные координаты)</h3>
+<table class="table table-bordered table-sm" id="pointsTable">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>X (px)</th>
+      <th>Y (px)</th>
+      <th>Real X (см)</th>
+      <th>Real Y (см)</th>
+      <th>Удалить</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<button id="applyBtn" class="btn btn-success">Применить</button>
+
+<script>
+let points = []; // массив точек [{ x, y, realX, realY }, ...]
+
+const snapshotImg = document.getElementById("snapshotImg");
+const snapshotContainer = document.getElementById("snapshotContainer");
+const pointsTableBody = document.querySelector("#pointsTable tbody");
+
+// 1) Загрузка уже сохранённых точек (homography_points.json)
+async function loadHomographyPoints() {
+  try {
+    const resp = await fetch("/api/load_homography_points");
+    const data = await resp.json(); // [{ x, y, realX, realY }, ...]
+    points = data;
+    renderTable();
+    safeDrawMarkers();
+  } catch (err) {
+    console.error("Ошибка загрузки гомографических точек:", err);
+  }
+}
+
+// 2) Рендер таблицы
+function renderTable() {
+  pointsTableBody.innerHTML = "";
+  points.forEach((pt, idx) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${idx+1}</td>
+      <td>${pt.x}</td>
+      <td>${pt.y}</td>
+      <td>
+        <input 
+          type="number" 
+          style="width:100px;" 
+          value="${pt.realX || 0}"
+          onchange="updateField(${idx}, 'realX', this.value)"
+        />
+      </td>
+      <td>
+        <input 
+          type="number" 
+          style="width:100px;" 
+          value="${pt.realY || 0}"
+          onchange="updateField(${idx}, 'realY', this.value)"
+        />
+      </td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="deletePoint(${idx})">X</button>
+      </td>
+    `;
+    pointsTableBody.appendChild(tr);
+  });
+}
+
+// 3) Безопасная отрисовка маркеров
+function safeDrawMarkers() {
+  if (!snapshotImg.complete || snapshotImg.naturalWidth === 0) {
+    snapshotImg.addEventListener("load", drawMarkers, { once: true });
+  } else {
+    drawMarkers();
+  }
+}
+
+// 4) Рисуем маркеры (label) на изображении
+function drawMarkers() {
+  snapshotContainer.querySelectorAll(".marker").forEach(m => m.remove());
+
+  points.forEach((pt, idx) => {
+    const { dispX, dispY } = originalToDisplayed(pt.x, pt.y);
+
+    const marker = document.createElement("div");
+    marker.className = "marker";
+    marker.style.left = dispX + "px";
+    marker.style.top = dispY + "px";
+
+    const label = document.createElement("div");
+    label.className = "marker-label";
+    label.innerText = (idx+1).toString();
+
+    marker.appendChild(label);
+    snapshotContainer.appendChild(marker);
+  });
+}
+
+// 5) Функция перевода (x, y) из оригинала в отображаемые (если картинка масштабирована)
+function originalToDisplayed(ox, oy) {
+  const naturalW = snapshotImg.naturalWidth;
+  const naturalH = snapshotImg.naturalHeight;
+  const renderedW = snapshotImg.clientWidth;
+  const renderedH = snapshotImg.clientHeight;
+
+  const scaleX = renderedW / naturalW;
+  const scaleY = renderedH / naturalH;
+
+  return {
+    dispX: ox * scaleX,
+    dispY: oy * scaleY
+  };
+}
+
+function updateField(index, field, val) {
+  points[index][field] = parseFloat(val) || 0;
+}
+
+// 6) Удаление точки
+function deletePoint(idx) {
+  points.splice(idx, 1);
+  renderTable();
+  safeDrawMarkers();
+}
+
+// 7) Клик на изображении => добавляем новую точку
+snapshotImg.addEventListener("click", (e) => {
+  const rect = snapshotImg.getBoundingClientRect();
+  const displayedX = e.clientX - rect.left;
+  const displayedY = e.clientY - rect.top;
+
+  const naturalW = snapshotImg.naturalWidth;
+  const naturalH = snapshotImg.naturalHeight;
+  const renderedW = snapshotImg.clientWidth;
+  const renderedH = snapshotImg.clientHeight;
+
+  const scaleX = naturalW / renderedW;
+  const scaleY = naturalH / renderedH;
+
+  const originalX = Math.round(displayedX * scaleX);
+  const originalY = Math.round(displayedY * scaleY);
+
+  points.push({ x: originalX, y: originalY, realX: 0, realY: 0 });
+  renderTable();
+  safeDrawMarkers();
+});
+
+// 8) "Обновить снимок"
+document.getElementById("refreshSnapshotBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/get_snapshot");
+    const data = await resp.json();
+    if (data.snapshotUrl) {
+      snapshotImg.src = data.snapshotUrl + "?ts=" + Date.now();
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Ошибка при обновлении снимка");
+  }
+});
+
+// 9) "Применить" => /api/apply_homography
+document.getElementById("applyBtn").addEventListener("click", async () => {
+  try {
+    const resp = await fetch("/api/apply_homography", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points }),
+    });
+    const json = await resp.json();
+    if (resp.ok) {
+      alert("Гомография успешно применена!");
+    } else {
+      alert("Ошибка: " + json.message);
+    }
+  } catch (err) {
+    console.error("Ошибка:", err);
+    alert("Ошибка при запросе");
+  }
+});
+
+// 10) При загрузке страницы
+window.addEventListener("load", () => {
+  loadHomographyPoints();
+});
+</script>
+
+{% endblock %}
