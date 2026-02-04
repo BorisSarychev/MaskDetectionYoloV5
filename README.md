@@ -2,6 +2,7 @@
 
 Проект на базе [YOLOv5 CrowdHuman ONNX](https://github.com/yakhyo/yolov5-crowdhuman-onnx): детекция людей по видеопотоку (RTSP/веб-камера) с помощью YOLOv5m (CrowdHuman), привязка пикселей кадра к реальным координатам через гомографию и отправка результатов по ZMQ/UDP.
 
+![Демонстрация](demo/5.gif)
 ![Демонстрация](demo/1-2.gif)
 
 ## Архитектура

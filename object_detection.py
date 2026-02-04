@@ -13,6 +13,7 @@ from utils.general import (
     check_img_size, scale_boxes, increment_path,
     LoadMedia, draw_detections, colors
 )
+from process_points import load_interest_points, find_nearest_people
 
 def zmq_sender(data_queue, endpoint_file="zmq_endpoint.json"):
     context = zmq.Context()
@@ -54,7 +55,8 @@ def run_object_detection(data_queue,
                          view,
                          project,
                          name,
-                         max_fps=None):
+                         max_fps=None,
+                         save_path=None):
     """Основной процесс для выполнения детекции."""
     # Если нужно сохранять результат, создаём выходную папку
     
@@ -71,23 +73,36 @@ def run_object_detection(data_queue,
     # Загружаем медиаданные (видео / веб-камера / изображение / rtsp)
     dataset = LoadMedia(source, img_size=img_size)
 
-    # Если нужно сохранять видео, создаём VideoWriter
+    # Если нужно сохранять видео, создаём VideoWriter (включая RTSP)
     vid_writer = None
-    if save and dataset.type in ["video", "webcam"]:
+    if save and dataset.type in ["video", "webcam", "rtsp"]:
         cap = dataset.cap
-        save_path = str(save_dir / Path(source).name)
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        out_path = save_path if save_path else str(save_dir / Path(source).name)
+        if not out_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+            out_path = out_path.rstrip('/').rstrip('\\') + '.mp4'
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0  # RTSP часто не отдаёт fps
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            print("[object_detection] WARNING: Invalid frame size from source, video save may fail.")
         vid_writer = cv2.VideoWriter(
-            save_path,
+            out_path,
             cv2.VideoWriter_fourcc(*'mp4v'),
             fps,
             (width, height)
         )
+        if not vid_writer.isOpened():
+            print(f"[object_detection] ERROR: Failed to open output file: {out_path}")
+            vid_writer = None
+        else:
+            print(f"[object_detection] Saving video to: {out_path}")
 
     # Ограничение частоты обработки (напр. RTSP 25 fps → обрабатываем 5 fps)
     last_process_time = None
+
+    # Загружаем точки из points.json для отрисовки связей с людьми
+    points_file = Path(__file__).parent / "points.json"
+    interest_points = load_interest_points(str(points_file))
 
     # Обрабатываем все кадры / изображения
     for resized_image, original_image, status in dataset:
@@ -112,6 +127,22 @@ def run_object_detection(data_queue,
         ]
         data_queue.put(people_points)
 
+        # ----- DRAWING: точки из points.json и линии к людям -----
+        if interest_points:
+            matched_points = find_nearest_people(interest_points, people_points)
+            line_color = (0, 255, 0)   # BGR: зелёный для линий
+            point_color = (0, 0, 255)  # BGR: красный для точек интереса
+            point_radius = 8
+            line_thickness = 2
+            for pt in interest_points:
+                x, y = int(pt[0]), int(pt[1])
+                cv2.circle(original_image, (x, y), point_radius, point_color, -1)
+                cv2.circle(original_image, (x, y), point_radius, (255, 255, 255), 1)
+            for poi, person in matched_points:
+                pt1 = (int(poi[0]), int(poi[1]))
+                pt2 = (int(person[0]), int(person[1]))
+                cv2.line(original_image, pt1, pt2, line_color, line_thickness, lineType=cv2.LINE_AA)
+
         # ----- DRAWING BOUNDING BOXES -----
         # Рисуем прямоугольники и подписи
         for box, score, class_id in zip(boxes, scores, class_ids):
@@ -126,7 +157,7 @@ def run_object_detection(data_queue,
 
         # Печатаем лог, сколько объектов каждого класса
         for c in np.unique(class_ids):
-            n = (class_ids == c).sum()  # detections per class
+            n = int((class_ids == c).sum())  # detections per class
             status += f"{n} {model.names[int(c)]}{'s' * (n > 1)}, "
 
         # Если нужно показывать окно
@@ -156,9 +187,9 @@ def run_object_detection(data_queue,
         if save:
             if dataset.type == "image":
                 # Сохраняем как jpg
-                save_path = str(save_dir / f"frame_{dataset.frame:04d}.jpg")
-                cv2.imwrite(save_path, original_image)
-            elif dataset.type in ["video", "webcam"] and vid_writer:
+                frame_path = str(save_dir / f"frame_{dataset.frame:04d}.jpg")
+                cv2.imwrite(frame_path, original_image)
+            elif dataset.type in ["video", "webcam", "rtsp"] and vid_writer and vid_writer.isOpened():
                 vid_writer.write(original_image)
 
     # Отправляем None в очередь, чтобы завершить ZMQ
@@ -183,6 +214,7 @@ def parse_args():
     parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
     parser.add_argument("--max-det", type=int, default=1000, help="maximum detections per image")
     parser.add_argument("--save", action="store_true", help="Save detected images")
+    parser.add_argument("--output", "-o", type=str, default=None, help="Output video path (e.g. C:\\output2.mp4)")
     parser.add_argument("--view", action="store_true", help="View inferenced images")
     parser.add_argument("--project", default="runs", help="save results to project/name")
     parser.add_argument("--name", default="exp", help="save results to project/name")
@@ -215,7 +247,8 @@ def main():
             view=params.view,
             project=params.project,
             name=params.name,
-            max_fps=params.max_fps
+            max_fps=params.max_fps,
+            save_path=params.output
         )
     finally:
         # Ожидаем завершения ZMQ-процесса
